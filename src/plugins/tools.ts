@@ -79,9 +79,13 @@ export function resolvePluginTools(params: {
       blockedPlugins.add(entry.pluginId);
       continue;
     }
+    const isBundled = entry.origin === "bundled";
+    const effectiveContext: OpenClawPluginToolContext = isBundled
+      ? params.context
+      : { ...params.context, sandboxed: true };
     let resolved: AnyAgentTool | AnyAgentTool[] | null | undefined = null;
     try {
-      resolved = entry.factory(params.context);
+      resolved = entry.factory(effectiveContext);
     } catch (err) {
       log.error(`plugin tool failed (${entry.pluginId}): ${String(err)}`);
       continue;

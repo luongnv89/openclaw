@@ -9,35 +9,73 @@
  */
 
 /**
- * Patterns that may indicate prompt injection attempts.
- * These are logged for monitoring but content is still processed (wrapped safely).
+ * Confidence level for suspicious pattern matches.
+ * - high: Very likely prompt injection (ignore instructions, system tags, role markers)
+ * - medium: Likely injection or social engineering (role hijacking, system override)
+ * - low: Possibly suspicious but could be legitimate (shell commands, flags)
  */
-const SUSPICIOUS_PATTERNS = [
-  /ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompts?)/i,
-  /disregard\s+(all\s+)?(previous|prior|above)/i,
-  /forget\s+(everything|all|your)\s+(instructions?|rules?|guidelines?)/i,
-  /you\s+are\s+now\s+(a|an)\s+/i,
-  /new\s+instructions?:/i,
-  /system\s*:?\s*(prompt|override|command)/i,
-  /\bexec\b.*command\s*=/i,
-  /elevated\s*=\s*true/i,
-  /rm\s+-rf/i,
-  /delete\s+all\s+(emails?|files?|data)/i,
-  /<\/?system>/i,
-  /\]\s*\n\s*\[?(system|assistant|user)\]?:/i,
+export type PatternConfidence = "low" | "medium" | "high";
+
+export type PatternMatch = {
+  pattern: string;
+  confidence: PatternConfidence;
+};
+
+type SuspiciousPatternEntry = {
+  regex: RegExp;
+  confidence: PatternConfidence;
+};
+
+/**
+ * Patterns that may indicate prompt injection attempts,
+ * classified by confidence level.
+ */
+const SUSPICIOUS_PATTERNS: SuspiciousPatternEntry[] = [
+  // High confidence: clear prompt injection attempts
+  {
+    regex: /ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompts?)/i,
+    confidence: "high",
+  },
+  { regex: /disregard\s+(all\s+)?(previous|prior|above)/i, confidence: "high" },
+  {
+    regex: /forget\s+(everything|all|your)\s+(instructions?|rules?|guidelines?)/i,
+    confidence: "high",
+  },
+  { regex: /new\s+instructions?:/i, confidence: "high" },
+  { regex: /<\/?system>/i, confidence: "high" },
+  { regex: /\]\s*\n\s*\[?(system|assistant|user)\]?:/i, confidence: "high" },
+
+  // Medium confidence: likely injection or social engineering
+  { regex: /you\s+are\s+now\s+(a|an)\s+/i, confidence: "medium" },
+  { regex: /system\s*:?\s*(prompt|override|command)/i, confidence: "medium" },
+  { regex: /delete\s+all\s+(emails?|files?|data)/i, confidence: "medium" },
+
+  // Low confidence: possibly suspicious but could be legitimate
+  { regex: /\bexec\b.*command\s*=/i, confidence: "low" },
+  { regex: /elevated\s*=\s*true/i, confidence: "low" },
+  { regex: /rm\s+-rf/i, confidence: "low" },
 ];
 
 /**
  * Check if content contains suspicious patterns that may indicate injection.
+ * Returns pattern matches with confidence levels.
  */
-export function detectSuspiciousPatterns(content: string): string[] {
-  const matches: string[] = [];
-  for (const pattern of SUSPICIOUS_PATTERNS) {
-    if (pattern.test(content)) {
-      matches.push(pattern.source);
+export function detectSuspiciousPatterns(content: string): PatternMatch[] {
+  const matches: PatternMatch[] = [];
+  for (const entry of SUSPICIOUS_PATTERNS) {
+    if (entry.regex.test(content)) {
+      matches.push({ pattern: entry.regex.source, confidence: entry.confidence });
     }
   }
   return matches;
+}
+
+/**
+ * Returns true if any match has high confidence, indicating a very likely
+ * prompt injection attempt that should be blocked.
+ */
+export function hasHighConfidenceInjection(matches: PatternMatch[]): boolean {
+  return matches.some((m) => m.confidence === "high");
 }
 
 /**

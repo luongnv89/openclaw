@@ -2,6 +2,7 @@ import path from "node:path";
 import type { AnyAgentTool } from "../agents/tools/common.js";
 import type { ChannelDock } from "../channels/dock.js";
 import type { ChannelPlugin } from "../channels/plugins/types.js";
+import type { OpenClawConfig } from "../config/config.js";
 import type {
   GatewayRequestHandler,
   GatewayRequestHandlers,
@@ -40,6 +41,7 @@ export type PluginToolRegistration = {
   names: string[];
   optional: boolean;
   source: string;
+  origin: PluginOrigin;
 };
 
 export type PluginCliRegistration = {
@@ -137,6 +139,54 @@ export type PluginRegistry = {
   diagnostics: PluginDiagnostic[];
 };
 
+/**
+ * Redact sensitive fields from config before exposing to non-bundled plugins.
+ * Prevents untrusted plugins from accessing auth tokens, API keys, etc.
+ */
+function redactConfigForPlugin(config: OpenClawConfig): OpenClawConfig {
+  const redacted = { ...config };
+  // Remove auth config (API keys, OAuth credentials)
+  delete redacted.auth;
+  // Remove inline env vars (may contain secrets)
+  if (redacted.env) {
+    redacted.env = { ...redacted.env };
+    delete redacted.env.vars;
+  }
+  // Remove hook token
+  if (redacted.hooks) {
+    redacted.hooks = { ...redacted.hooks };
+    delete redacted.hooks.token;
+  }
+  // Remove gateway token
+  if (redacted.gateway) {
+    redacted.gateway = { ...redacted.gateway };
+    delete (redacted.gateway as Record<string, unknown>).token;
+  }
+  return redacted;
+}
+
+/**
+ * Create a restricted plugin runtime that blocks dangerous operations
+ * for non-bundled plugins.
+ */
+function createRestrictedRuntime(base: PluginRuntime): PluginRuntime {
+  return {
+    ...base,
+    system: {
+      ...base.system,
+      runCommandWithTimeout: () => {
+        throw new Error("non-bundled plugins cannot execute system commands");
+      },
+    },
+    config: {
+      ...base.config,
+      writeConfigFile: () => {
+        throw new Error("non-bundled plugins cannot modify configuration");
+      },
+    },
+  };
+}
+
 export type PluginRegistryParams = {
   logger: PluginLogger;
   coreGatewayHandlers?: GatewayRequestHandlers;
@@ -189,6 +239,7 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       names: normalized,
       optional,
       source: record.source,
+      origin: record.origin,
     });
   };
 
@@ -472,15 +523,21 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       pluginConfig?: Record<string, unknown>;
     },
   ): OpenClawPluginApi => {
+    const isBundled = record.origin === "bundled";
+    const effectiveConfig = isBundled ? params.config : redactConfigForPlugin(params.config);
+    const effectiveRuntime = isBundled
+      ? registryParams.runtime
+      : createRestrictedRuntime(registryParams.runtime);
+
     return {
       id: record.id,
       name: record.name,
       version: record.version,
       description: record.description,
       source: record.source,
-      config: params.config,
+      config: effectiveConfig,
       pluginConfig: params.pluginConfig,
-      runtime: registryParams.runtime,
+      runtime: effectiveRuntime,
       logger: normalizeLogger(registryParams.logger),
       registerTool: (tool, opts) => registerTool(record, tool, opts),
       registerHook: (events, handler, opts) =>

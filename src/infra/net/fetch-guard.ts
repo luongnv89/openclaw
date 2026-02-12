@@ -2,8 +2,11 @@ import type { Dispatcher } from "undici";
 import {
   closeDispatcher,
   createPinnedDispatcher,
+  isBlockedHostname,
+  isPrivateIpAddress,
   resolvePinnedHostname,
   resolvePinnedHostnameWithPolicy,
+  SsrFBlockedError,
   type LookupFn,
   type SsrFPolicy,
 } from "./ssrf.js";
@@ -147,6 +150,33 @@ export async function fetchWithSsrFGuard(params: GuardedFetchOptions): Promise<G
           throw new Error(`Too many redirects (limit: ${maxRedirects})`);
         }
         const nextUrl = new URL(location, parsedUrl).toString();
+
+        // SECURITY: Validate redirect target against SSRF before following
+        const redirectParsed = new URL(nextUrl);
+        if (!["http:", "https:"].includes(redirectParsed.protocol)) {
+          await release(dispatcher);
+          throw new SsrFBlockedError(
+            `Blocked redirect to non-HTTP protocol: ${redirectParsed.protocol}`,
+          );
+        }
+        const useRedirectPolicy = Boolean(
+          params.policy?.allowPrivateNetwork || params.policy?.allowedHostnames?.length,
+        );
+        if (!useRedirectPolicy) {
+          if (isBlockedHostname(redirectParsed.hostname)) {
+            await release(dispatcher);
+            throw new SsrFBlockedError(
+              `Blocked redirect to restricted hostname: ${redirectParsed.hostname}`,
+            );
+          }
+          if (isPrivateIpAddress(redirectParsed.hostname)) {
+            await release(dispatcher);
+            throw new SsrFBlockedError(
+              `Blocked redirect to private/internal IP: ${redirectParsed.hostname}`,
+            );
+          }
+        }
+
         if (visited.has(nextUrl)) {
           await release(dispatcher);
           throw new Error("Redirect loop detected");

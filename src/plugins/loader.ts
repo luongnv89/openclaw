@@ -309,6 +309,19 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
       continue;
     }
 
+    // SECURITY: Warn about non-bundled plugins running with full system access
+    if (candidate.origin !== "bundled") {
+      logger.warn(
+        `[plugins] SECURITY: Plugin "${pluginId}" from ${candidate.origin} source runs with FULL system access`,
+      );
+      registry.diagnostics.push({
+        level: "warn",
+        pluginId,
+        source: candidate.source,
+        message: `non-bundled plugin runs with full system access (origin: ${candidate.origin})`,
+      });
+    }
+
     const resolved = resolvePluginModuleExport(mod);
     const definition = resolved.definition;
     const register = resolved.register;

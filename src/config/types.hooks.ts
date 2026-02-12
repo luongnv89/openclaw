@@ -22,6 +22,8 @@ export type HookMappingConfig = {
   deliver?: boolean;
   /** DANGEROUS: Disable external content safety wrapping for this hook. */
   allowUnsafeExternalContent?: boolean;
+  /** Block processing when high-confidence prompt injection is detected. */
+  blockOnSuspicious?: boolean;
   channel?:
     | "last"
     | "whatsapp"
@@ -55,6 +57,8 @@ export type HooksGmailConfig = {
   renewEveryMinutes?: number;
   /** DANGEROUS: Disable external content safety wrapping for Gmail hooks. */
   allowUnsafeExternalContent?: boolean;
+  /** Block processing when high-confidence prompt injection is detected in Gmail hooks. */
+  blockOnSuspicious?: boolean;
   serve?: {
     bind?: string;
     port?: number;
@@ -117,6 +121,8 @@ export type HooksConfig = {
   enabled?: boolean;
   path?: string;
   token?: string;
+  /** Block processing when high-confidence prompt injection is detected (global default). */
+  blockOnSuspicious?: boolean;
   /**
    * Restrict explicit hook `agentId` routing to these agent ids.
    * Omit or include `*` to allow any agent. Set `[]` to deny all explicit `agentId` routing.

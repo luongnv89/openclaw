@@ -51,6 +51,7 @@ import {
   buildSafeExternalPrompt,
   detectSuspiciousPatterns,
   getHookType,
+  hasHighConfidenceInjection,
   isExternalHookSession,
 } from "../../security/external-content.js";
 import { resolveCronDeliveryPlan } from "../delivery.js";
@@ -300,10 +301,29 @@ export async function runCronIsolatedAgentTurn(params: {
     // Log suspicious patterns for security monitoring
     const suspiciousPatterns = detectSuspiciousPatterns(params.message);
     if (suspiciousPatterns.length > 0) {
+      const patternSummary = suspiciousPatterns
+        .slice(0, 3)
+        .map((m) => m.pattern)
+        .join(", ");
       logWarn(
         `[security] Suspicious patterns detected in external hook content ` +
-          `(session=${baseSessionKey}, patterns=${suspiciousPatterns.length}): ${suspiciousPatterns.slice(0, 3).join(", ")}`,
+          `(session=${baseSessionKey}, patterns=${suspiciousPatterns.length}): ${patternSummary}`,
       );
+
+      // Resolve blockOnSuspicious: per-hook payload > gmail config > global hooks config
+      const blockOnSuspicious =
+        agentPayload?.blockOnSuspicious ??
+        (isGmailHook ? params.cfg.hooks?.gmail?.blockOnSuspicious : undefined) ??
+        params.cfg.hooks?.blockOnSuspicious ??
+        false;
+
+      if (blockOnSuspicious && hasHighConfidenceInjection(suspiciousPatterns)) {
+        logWarn(
+          `[security] BLOCKED: High-confidence prompt injection detected in external hook content ` +
+            `(session=${baseSessionKey}). Content will not be processed.`,
+        );
+        return;
+      }
     }
   }
 

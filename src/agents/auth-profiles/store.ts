@@ -1,10 +1,12 @@
 import type { OAuthCredentials } from "@mariozechner/pi-ai";
 import fs from "node:fs";
+import path from "node:path";
 import lockfile from "proper-lockfile";
 import type { AuthProfileCredential, AuthProfileStore, ProfileUsageStats } from "./types.js";
 import { resolveOAuthPath } from "../../config/paths.js";
-import { loadJsonFile, saveJsonFile } from "../../infra/json-file.js";
+import { loadJsonFile } from "../../infra/json-file.js";
 import { AUTH_STORE_LOCK_OPTIONS, AUTH_STORE_VERSION, log } from "./constants.js";
+import { decryptAuthStore, encryptAuthStore } from "./crypto.js";
 import { syncExternalCliCredentials } from "./external-cli-sync.js";
 import { ensureAuthStoreFile, resolveAuthStorePath, resolveLegacyAuthStorePath } from "./paths.js";
 
@@ -194,13 +196,13 @@ function mergeOAuthFileIntoStore(store: AuthProfileStore): boolean {
 
 export function loadAuthProfileStore(): AuthProfileStore {
   const authPath = resolveAuthStorePath();
-  const raw = loadJsonFile(authPath);
+  const raw = loadAuthStoreFile(authPath);
   const asStore = coerceAuthStore(raw);
   if (asStore) {
     // Sync from external CLI tools on every load
     const synced = syncExternalCliCredentials(asStore);
     if (synced) {
-      saveJsonFile(authPath, asStore);
+      saveAuthStoreFile(authPath, asStore);
     }
     return asStore;
   }
@@ -257,13 +259,13 @@ function loadAuthProfileStoreForAgent(
   _options?: { allowKeychainPrompt?: boolean },
 ): AuthProfileStore {
   const authPath = resolveAuthStorePath(agentDir);
-  const raw = loadJsonFile(authPath);
+  const raw = loadAuthStoreFile(authPath);
   const asStore = coerceAuthStore(raw);
   if (asStore) {
     // Sync from external CLI tools on every load
     const synced = syncExternalCliCredentials(asStore);
     if (synced) {
-      saveJsonFile(authPath, asStore);
+      saveAuthStoreFile(authPath, asStore);
     }
     return asStore;
   }
@@ -271,11 +273,11 @@ function loadAuthProfileStoreForAgent(
   // Fallback: inherit auth-profiles from main agent if subagent has none
   if (agentDir) {
     const mainAuthPath = resolveAuthStorePath(); // without agentDir = main
-    const mainRaw = loadJsonFile(mainAuthPath);
+    const mainRaw = loadAuthStoreFile(mainAuthPath);
     const mainStore = coerceAuthStore(mainRaw);
     if (mainStore && Object.keys(mainStore.profiles).length > 0) {
       // Clone main store to subagent directory for auth inheritance
-      saveJsonFile(authPath, mainStore);
+      saveAuthStoreFile(authPath, mainStore);
       log.info("inherited auth-profiles from main agent", { agentDir });
       return mainStore;
     }
@@ -325,7 +327,7 @@ function loadAuthProfileStoreForAgent(
   const syncedCli = syncExternalCliCredentials(store);
   const shouldWrite = legacy !== null || mergedOAuth || syncedCli;
   if (shouldWrite) {
-    saveJsonFile(authPath, store);
+    saveAuthStoreFile(authPath, store);
   }
 
   // PR #368: legacy auth.json could get re-migrated from other agent dirs,
@@ -365,6 +367,44 @@ export function ensureAuthProfileStore(
   return merged;
 }
 
+/**
+ * Load auth store file with transparent decryption.
+ * Handles both encrypted ("enc:v1:...") and unencrypted JSON files.
+ */
+function loadAuthStoreFile(authPath: string): unknown {
+  try {
+    if (!fs.existsSync(authPath)) {
+      return undefined;
+    }
+    const raw = fs.readFileSync(authPath, "utf8");
+    if (!raw.trim()) {
+      return undefined;
+    }
+    const decrypted = decryptAuthStore(raw.trim(), authPath);
+    if (!decrypted) {
+      return undefined;
+    }
+    return JSON.parse(decrypted) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Save auth store file with encryption.
+ * Encrypted data is stored as "enc:v1:" + base64(...).
+ */
+function saveAuthStoreFile(authPath: string, data: unknown): void {
+  const dir = path.dirname(authPath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  }
+  const plaintext = JSON.stringify(data, null, 2) + "\n";
+  const encrypted = encryptAuthStore(plaintext, authPath);
+  fs.writeFileSync(authPath, encrypted, "utf8");
+  fs.chmodSync(authPath, 0o600);
+}
+
 export function saveAuthProfileStore(store: AuthProfileStore, agentDir?: string): void {
   const authPath = resolveAuthStorePath(agentDir);
   const payload = {
@@ -374,5 +414,5 @@ export function saveAuthProfileStore(store: AuthProfileStore, agentDir?: string)
     lastGood: store.lastGood ?? undefined,
     usageStats: store.usageStats ?? undefined,
   } satisfies AuthProfileStore;
-  saveJsonFile(authPath, payload);
+  saveAuthStoreFile(authPath, payload);
 }

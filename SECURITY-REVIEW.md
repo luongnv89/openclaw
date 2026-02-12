@@ -47,9 +47,9 @@ The codebase demonstrates mature security engineering with defense-in-depth prin
 ### High
 
 | #   | Finding                                             | Location                                                                                        | Risk                                                                                                       |
-| --- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| H1  | **Telegram webhook secret optional**                | `src/telegram/webhook.ts:46-48` — `secretToken: opts.secret` can be `undefined`                 | Webhook endpoint accessible without signature verification                                                 |
-| H2  | **Slack signing secret can be empty**               | `src/slack/monitor/provider.ts:125` — `signingSecret: signingSecret ?? ""`                      | Empty string may bypass HMAC verification                                                                  |
+| --- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| H1  | **Telegram webhook secret optional**                | `src/telegram/webhook.ts:46-48` — `secretToken: opts.secret` can be `undefined`                 | Webhook endpoint accessible without signature verification                                                 | **Fixed** — `startTelegramWebhook` now throws if secret is missing or empty                              |
+| H2  | **Slack signing secret can be empty**               | `src/slack/monitor/provider.ts:125` — `signingSecret: signingSecret ?? ""`                      | Empty string may bypass HMAC verification                                                                  | **Fixed** — removed `?? ""` fallback; guard at line 73 already rejects empty signing secret in http mode |
 | H3  | **No WebSocket rate limiting**                      | `src/gateway/` — no per-IP connection limits or message rate limiting                           | Connection flood / DoS vulnerability                                                                       |
 | H4  | **Token refresh errors may leak tokens**            | `src/agents/auth-profiles/oauth.ts:271-283` — error includes `buildOAuthApiKey()` result        | Logs/crash reports could contain full tokens                                                               |
 | H5  | **Device auth v1 has no nonce**                     | `src/gateway/device-auth.ts:14` — v1 still supported without nonce                              | v1 tokens can be replayed if intercepted                                                                   |
@@ -250,14 +250,14 @@ These are well-implemented security measures that should be preserved:
 
 - Uses `@slack/bolt` HTTPReceiver for signature verification
 - Socket Mode alternative with app token authentication
-- Gap: signing secret defaults to empty string if undefined (H2)
+- ~~Gap: signing secret defaults to empty string if undefined (H2)~~ **Fixed**
 
 **Telegram** (`src/telegram/`):
 
 - grammY's `webhookCallback` with secret token
 - Rate limiting via `@grammyjs/transformer-throttler`
 - Update deduplication with ID tracking
-- Gap: webhook secret token is optional (H1)
+- ~~Gap: webhook secret token is optional (H1)~~ **Fixed**
 
 **LINE** (`src/line/`):
 
@@ -354,8 +354,8 @@ These items were reviewed and determined to be acceptable:
 ### Immediate (Critical fixes)
 
 - [x] **C2** — Re-validate SSRF policy on each redirect hop in `src/infra/net/fetch-guard.ts`
-- [ ] **H1** — Make Telegram webhook secret mandatory (reject startup if not set in webhook mode)
-- [ ] **H2** — Fix Slack signing secret to reject empty string with clear error message
+- [x] **H1** — Make Telegram webhook secret mandatory (reject startup if not set in webhook mode)
+- [x] **H2** — Fix Slack signing secret to reject empty string with clear error message
 - [x] **C4** — Add `blockOnSuspicious` config option to reject high-confidence prompt injection
 
 ### Short-term (High priority)

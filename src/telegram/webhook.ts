@@ -43,6 +43,13 @@ export async function startTelegramWebhook(opts: {
     config: opts.config,
     accountId: opts.accountId,
   });
+  if (!opts.secret) {
+    throw new Error(
+      "Telegram webhook secret is required for webhook mode. " +
+        "Set channels.telegram.webhookSecret in your config.",
+    );
+  }
+
   const handler = webhookCallback(bot, "http", {
     secretToken: opts.secret,
   });

@@ -124,7 +124,7 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
   const receiver =
     slackMode === "http"
       ? new HTTPReceiver({
-          signingSecret: signingSecret ?? "",
+          signingSecret: signingSecret!,
           endpoints: slackWebhookPath,
         })
       : null;
